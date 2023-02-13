@@ -1,0 +1,15 @@
+[Unit]
+Description=Jitsi Matrix auth proxy
+After=network-online.target
+StartLimitIntervalSec=30
+StartLimitBurst=2
+
+[Service]
+Type=simple
+User=debian
+Restart=on-failure
+WorkingDirectory=/opt/jitsi-matrix-auth-proxy
+ExecStart=/usr/local/bin/poetry run uvicorn server:app --workers 4 --port 3000
+
+[Install]
+WantedBy=multi-user.target
