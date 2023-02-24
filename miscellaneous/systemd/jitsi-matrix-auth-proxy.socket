@@ -1,0 +1,10 @@
+[Unit]
+Description=Jitsi Matrix auth proxy - Gunicorn socket
+
+[Socket]
+ListenStream=/run/jitsi-matrix-auth-proxy.sock
+SocketUser=www-data
+SocketMode=600
+
+[Install]
+WantedBy=sockets.target

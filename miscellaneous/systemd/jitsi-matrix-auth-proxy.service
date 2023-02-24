@@ -1,0 +1,19 @@
+# https://docs.gunicorn.org/en/stable/deploy.html#systemd
+
+[Unit]
+Description=Jitsi Matrix auth proxy - Gunicorn daemon
+Requires=gunicorn.socket
+After=network.target
+
+[Service]
+Type=notify
+DynamicUser=yes
+WorkingDirectory=/opt/jitsi-matrix-auth-proxy/jitsi_matrix_auth_proxy
+ExecStart=/opt/poetry/bin/poetry run gunicorn server:app --workers 4 --worker-class uvicorn.workers.UvicornWorker
+ExecReload=/bin/kill -s HUP $MAINPID
+KillMode=mixed
+TimeoutStopSec=5
+EnvironmentFile=/opt/jitsi-matrix-auth-proxy/.env
+
+[Install]
+WantedBy=multi-user.target
