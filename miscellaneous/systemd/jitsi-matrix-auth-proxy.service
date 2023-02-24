@@ -2,7 +2,7 @@
 
 [Unit]
 Description=Jitsi Matrix auth proxy - Gunicorn daemon
-Requires=gunicorn.socket
+Requires=jitsi-matrix-auth-proxy.socket
 After=network.target
 
 [Service]
