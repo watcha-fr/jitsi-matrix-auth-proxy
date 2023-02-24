@@ -8,7 +8,7 @@ readme = "README.md"
 packages = [{include = "jitsi_matrix_auth_proxy"}]
 
 [tool.poetry.dependencies]
-python = "^3.10"
+python = "^3.8"
 blacksheep = "^1.2.9"
 uvicorn = "^0.20.0"
 PyJWT = "^2.6.0"
