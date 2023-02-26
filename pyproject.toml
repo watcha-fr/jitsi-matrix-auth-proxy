@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "jitsi-matrix-auth-proxy"
-version = "0.1.0"
+version = "0.2.0"
 description = "Proxy to convert on the fly Matrix custom JWT for Jitsi to standard JWT"
 authors = ["c-cal <github-2c7c@zebrina.fr>"]
 license = "Apache 2.0"
