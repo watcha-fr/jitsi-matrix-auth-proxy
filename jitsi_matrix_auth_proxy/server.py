@@ -15,9 +15,7 @@ JITSI_DOMAIN = environ["JITSI_DOMAIN"]
 JITSI_TOPLEVEL_REDIRECT_PATH = environ.get(
     "JITSI_TOPLEVEL_REDIRECT_PATH", "jwt-handled"
 )
-REDIS_URL = environ.get(
-    "REDIS_URL", "unix:///run/jitsi-matrix-auth-proxy-redis.sock/?db=0"
-)
+REDIS_URL = environ.get("REDIS_URL", "unix:///var/run/redis/redis-server.sock")
 LOG_LEVEL = environ.get("LOG_LEVEL", "INFO")
 
 
