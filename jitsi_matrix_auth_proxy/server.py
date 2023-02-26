@@ -1,11 +1,9 @@
 import logging
-from functools import wraps
 from os import environ
-from time import monotonic
-from typing import Any, Mapping, Optional
+from typing import Mapping, Optional
 from urllib.parse import urlencode
 
-from async_lru import alru_cache
+import redis.asyncio as redis
 from blacksheep import Application, Content, Request, ok, see_other
 from blacksheep.client import ClientSession
 from jwt import decode as jwt_decode
@@ -17,6 +15,9 @@ JITSI_DOMAIN = environ["JITSI_DOMAIN"]
 JITSI_TOPLEVEL_REDIRECT_PATH = environ.get(
     "JITSI_TOPLEVEL_REDIRECT_PATH", "jwt-handled"
 )
+REDIS_URL = environ.get(
+    "REDIS_URL", "unix:///run/jitsi-matrix-auth-proxy-redis.sock/?db=0"
+)
 LOG_LEVEL = environ.get("LOG_LEVEL", "INFO")
 
 
@@ -25,26 +26,7 @@ logging.basicConfig(
     level=getattr(logging, LOG_LEVEL.upper()),
 )
 
-
-def timed_alru_cache(seconds: int = 30, maxsize: int = 128):
-    def wrapper_cache(func: Any):
-        func = alru_cache(maxsize=maxsize)(func)
-        func.expiration = monotonic() + seconds
-
-        @wraps(func)
-        async def wrapped_func(*args, **kwargs):
-            current_monotonic_clock = monotonic()
-            if current_monotonic_clock >= func.expiration:
-                logging.debug(
-                    f"Expiration reached for cached function: {func.__name__} ({current_monotonic_clock} >= {func.expiration})"
-                )
-                func.cache_clear()
-                func.expiration = monotonic() + seconds
-            return await func(*args, **kwargs)
-
-        return wrapped_func
-
-    return wrapper_cache
+cache = redis.from_url(REDIS_URL, decode_responses=True)
 
 
 def extract_matrix_claims(jwt: str) -> Optional[Mapping[str, str]]:
@@ -60,36 +42,57 @@ def extract_matrix_claims(jwt: str) -> Optional[Mapping[str, str]]:
         }
 
 
-@timed_alru_cache(300)
 async def get_homeserver_base_url(http_client: ClientSession, server_name: str) -> str:
+    cache_key = f"SERVER_NAME__{server_name}"
+    if homeserver_base_url := await cache.get(cache_key):
+        logging.debug(
+            f"Cached server name {server_name} bound to homeserver base url {homeserver_base_url}"
+        )
+        return homeserver_base_url
+
     autodiscovery_url = f"https://{server_name}/.well-known/matrix/client"
     response = await http_client.get(autodiscovery_url)
     data = await response.json()
-    homeserver_base_url = data.get("m.homeserver", {}).get("base_url", "").rstrip("/")
-    if not homeserver_base_url:
-        raise ValueError(f"bad autodiscovery data: {data}")
+
+    if not (
+        homeserver_base_url := data.get("m.homeserver", {})
+        .get("base_url", "")
+        .rstrip("/")
+    ):
+        raise ValueError(f"Bad autodiscovery data: {data}")
+
     logging.debug(f"Homeserver base url: {homeserver_base_url}")
+    await cache.setex(cache_key, 300, homeserver_base_url)
     return homeserver_base_url
 
 
-@timed_alru_cache()
 async def check_openid_token(
     http_client: ClientSession, server_name: str, openid_token: str
 ) -> bool:
-    homeserver_base_url = await get_homeserver_base_url(http_client, server_name)
-    logging.debug(
-        f"Cached function get_homeserver_base_url: {get_homeserver_base_url.cache_info()}"
-    )
-    url = f"{homeserver_base_url}/_matrix/federation/v1/openid/userinfo?access_token={openid_token}"
-    response = await http_client.get(url)
-    data = await response.json()
-    mx_userid = data.get("sub")
-    if mx_userid:
-        logging.info(f"Valid OpenID token (Matrix) for user: {mx_userid}")
+    cache_key = f"OPENID_TOKEN__{openid_token}"
+    if mx_userid := await cache.get(cache_key):
+        logging.info(
+            f"Cached OpenID token {openid_token} bound to Matrix user ID {mx_userid}"
+        )
         return True
-    else:
-        logging.warning(f"Invalid OpenID token (Matrix): {data}")
+
+    if mx_userid == "":
+        logging.warning(f"Cached invalid OpenID token {openid_token}")
         return False
+
+    homeserver_base_url = await get_homeserver_base_url(http_client, server_name)
+    userinfo_url = f"{homeserver_base_url}/_matrix/federation/v1/openid/userinfo?access_token={openid_token}"
+    response = await http_client.get(userinfo_url)
+    data = await response.json()
+
+    if mx_userid := data.get("sub"):
+        logging.info(f"OpenID token {openid_token} bound to Matrix user ID {mx_userid}")
+        await cache.setex(cache_key, 60, mx_userid)
+        return True
+
+    logging.warning(f"Invalid OpenID token ({data})")
+    await cache.setex(cache_key, 60, "")
+    return False
 
 
 def generate_jitsi_jwt() -> str:
@@ -136,7 +139,6 @@ async def handle_all_get(
     if jwt and (matrix_claims := extract_matrix_claims(jwt)):
         if await check_openid_token(http_client, **matrix_claims):
             query["jwt"] = [generate_jitsi_jwt()]
-        logging.debug(f"Cached function: {check_openid_token.cache_info()}")
 
     redirect_url = build_redirect_url(request, query)
     return see_other(redirect_url)
@@ -152,7 +154,6 @@ async def handle_bosh(
     if token and (matrix_claims := extract_matrix_claims(token)):
         if await check_openid_token(http_client, **matrix_claims):
             query["token"] = [generate_jitsi_jwt()]
-        logging.debug(f"Cached function: {check_openid_token.cache_info()}")
 
     redirect_url = build_redirect_url(request, query)
 
